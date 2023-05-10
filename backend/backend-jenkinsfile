@@ -1,1 +1,59 @@
+pipeline {
+    agent{
+       label 'chat-project'
+    }
+  
+  environment {
+
+    DOCKERHUB_CREDENTIALS = credentials('yoursureshdockerhub')
+     registry = "yoursureshdockerhub/chat-backend"
+        registryCredential = 'yoursureshdockerhub'
+        dockerImage = ''
+    }
+    
+     stages {
+         
+          stage('creating  new docker network') {
+            steps {
+               
+                sh 'docker network create chatnetwork'
+            }
+        }
+ 
+         stage('building the docker image') {
+            steps {
+               
+                sh 'cd backend && docker build -t yoursureshdockerhub/chat-backend .'
+            }
+          
+        }
+         stage('Logging into dockerhub account') {
+            steps {
+                sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
+            }
+        }          
+        stage('pushing the docker image into dockerhub') {
+            steps {
+                  sh 'docker push yoursureshdockerhub/chat-backend'
+            }
+        }
+        stage('Remove old docker images') {
+             steps {
+                 sh 'docker rmi -f yoursureshdockerhub/chat-backend'
+            }
+        }
+         stage('creating database container') {
+             steps {
+                 sh 'docker container rm --force chatdb'
+                 sh 'docker run -d -p 5432:5432 --network chatnetwork -e  POSTGRES_PASSWORD=password --name chatdb postgres'
+            }
+        }
+         stage('Running the docker container') {
+            steps {
+                  sh 'docker container rm --force chatbackend'
+                  sh 'docker run -d -p 8080:8080 --network chatnetwork -e DATABASE_URL=postgresql://postgres:password@chatdb:5432/postgres --name chatbackend -e PORT=8080 -e MODE=local yoursureshdockerhub/chat-backend'
+            }
+        }
+    }
+}
 

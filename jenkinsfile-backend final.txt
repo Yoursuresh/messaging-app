@@ -1,0 +1,109 @@
+pipeline {
+    agent {
+        label 'lms-slavenode'
+    }
+
+    environment {
+        DOCKERHUB_CREDENTIALS = credentials('yoursureshdockerhub')
+        registry = "yoursureshdockerhub/lms-backend"
+        registryCredential = 'yoursureshdockerhub'
+        dockerImage = ''
+    }
+
+    stages {
+      
+                stage('pipeline status') {
+            steps {
+                script {
+                    slackSend channel: 'jenkins',
+                            color: '#1e1ec9',
+                            message: 'lms-Backend Pipeline has been Started',
+                            tokenCredentialId: '39bdd4ec-778b-421e-afa7-43e64c149c79'
+                }
+            }
+        }
+
+
+
+         stage('Creating network') {
+            steps {
+                script {
+                    def networkExists = sh(script: 'docker network ls -q -f name=lmsnetwork', returnStatus: true)
+                    if (networkExists == 0) {
+                        echo 'lmsnetwork already exists'
+                    } else {
+                        echo 'Creating lmsnetwork...'
+                        sh 'docker network create lmsnetwork'
+                    }
+                }
+            }
+        }
+
+        stage('building backend image') {
+            steps {
+                sh 'cd api && docker build -t yoursureshdockerhub/lms-backend .'
+            }
+        }
+
+        stage('sonarqube analysis') {
+            steps {
+                sh 'docker container run --rm -e SONAR_HOST_URL="http://4.213.1.174:9000" -e SONAR_LOGIN="sqp_13e1c7403efb97927cbaead0ac40974799e29cce" -v ".:/usr/src" sonarsource/sonar-scanner-cli -Dsonar.projectKey=lms-app'
+            }
+        }
+
+        stage('docker login') {
+            steps {
+                sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
+            }
+        }
+
+        stage('pushing image') {
+            steps {
+                sh 'docker push yoursureshdockerhub/lms-backend'
+            }
+        }
+
+        stage('Removing old-images') {
+            steps {
+                sh 'docker rmi -f yoursureshdockerhub/lms-backend'
+            }
+        }
+
+        stage('running database image') {
+            steps {
+                sh 'docker container rm --force lmsdb'
+                sh 'docker run -d -p 5432:5432 --network lmsnetwork -e POSTGRES_PASSWORD=password --name lmsdb postgres'
+            }
+        }
+
+        stage('Running container') {
+            steps {
+                sh 'docker container rm --force backend'
+                sh 'docker run -d -p 8080:8080 --network lmsnetwork -e DATABASE_URL=postgresql://postgres:password@lmsdb:5432/postgres --name backend -e PORT=8080 -e MODE=local yoursureshdockerhub/lms-backend'
+            }
+        }
+    }
+
+    post {
+        success {
+            script {
+                slackSend channel: 'jenkins', color: 'good', message: 'hi..CONGRATULATIONS!!! Backend job succeeded', tokenCredentialId: '39bdd4ec-778b-421e-afa7-43e64c149c79'
+                slackUploadFile channel: 'jenkins', credentialId: '39bdd4ec-778b-421e-afa7-43e64c149c79', filePath: 'api/jenkinsfile-api'
+                emailext body: '''building lms application backend job got success check browser with your ip:port number/api. it will show success 
+
+ThankYou,
+Suresh''', recipientProviders: [buildUser()], subject: 'Build Successful !! lms_backend', to: 'yoursureshb@gmail.com'
+            }
+        }
+        failure {
+            script {
+                slackSend channel: 'jenkins', color: 'danger', message: 'Ooops..Failed!!check the back-end job configurations Thanks...Suresh - Job failed', tokenCredentialId: '39bdd4ec-778b-421e-afa7-43e64c149c79'
+                emailext body: '''building lms application backend job got failed check job configuration.
+
+ThankYou,
+Suresh''', recipientProviders: [buildUser()], subject: 'Build failed!! lms_backend', to: 'yoursureshb@gmail.com'
+            }
+        }
+    }
+}
+

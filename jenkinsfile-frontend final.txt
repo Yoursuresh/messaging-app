@@ -1,0 +1,115 @@
+pipeline {
+    agent {
+      label 'lms-slavenode'
+    }
+
+    environment {
+
+    DOCKERHUB_CREDENTIALS = credentials('yoursureshdockerhub')
+     registry = "yoursureshdockerhub/lms-frontend"
+        registryCredential = 'yoursureshdockerhub'
+        dockerImage = ''
+    }
+
+    stages {
+        
+         stage('pipeline status') {
+            steps {
+                script {
+                    slackSend channel: 'jenkins',
+                            color: '#1e1ec9',
+                            message: 'lms-Frontend Pipeline has been Started',
+                            tokenCredentialId: '39bdd4ec-778b-421e-afa7-43e64c149c79'
+                }
+            }
+        }
+         stage('sonarqube analysis') {
+            steps {
+               
+                sh 'docker container run --rm -e SONAR_HOST_URL="http://4.213.1.174:9000" -e SONAR_LOGIN="sqp_13e1c7403efb97927cbaead0ac40974799e29cce" -v ".:/usr/src" sonarsource/sonar-scanner-cli -Dsonar.projectKey=lms-app'
+            }
+          
+        }       
+
+        stage('Building frontend image') {
+            steps {
+                sh 'cd webapp && docker build -t yoursureshdockerhub/lms-frontend .'
+            }
+        }
+
+
+
+         stage('nexus artifacts') {
+            steps {
+                script {
+                    def zipInstalled = sh(script: 'dpkg -s zip', returnStatus: true)
+                    if (zipInstalled == 0) {
+                        echo 'zip is already installed'
+                    } else {
+                        echo 'zip is not installed, installing...'
+                        sh 'sudo apt update'
+                        sh 'sudo apt install -y zip'
+                    }
+                }
+                script {
+                    echo "Releasing.."       
+                    def packageJSON = readJSON file: 'webapp/package.json'
+                    def packageJSONVersion = packageJSON.version
+                    echo "${packageJSONVersion}"  
+                    sh "zip -r webapp/dist-0.0.0.zip . -i webapp/dist"
+                    sh "curl -v -u admin:admin1 --upload-file webapp/dist-${packageJSONVersion}.zip http://20.235.76.248:8081/repository/lms/"     
+            }
+            }
+        }
+
+
+
+
+        stage('docker-login') {
+            steps {
+                sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
+            }
+        }
+
+        stage('pushing image to dockerhub') {
+            steps {
+                  sh 'docker push yoursureshdockerhub/lms-frontend'
+            }
+        }
+
+        stage('Remove old images') {
+             steps {
+                 sh 'docker rmi -f yoursureshdockerhub/lms-frontend'
+            }
+        }
+
+         stage('Running container') {
+            steps {
+                  sh 'docker container rm --force f-end'
+                  sh 'docker run -dt -p 8000:80 --name f-end yoursureshdockerhub/lms-frontend'
+            }
+        }
+    }
+
+    post {
+        success {
+            script {
+                slackSend channel: 'jenkins', color: 'good', message: 'hi..CONGRATULATIONS Front-end job success !!!  Front_end build succeeded Thanks...Suresh', tokenCredentialId: '39bdd4ec-778b-421e-afa7-43e64c149c79'
+                slackUploadFile channel: 'jenkins', credentialId: '39bdd4ec-778b-421e-afa7-43e64c149c79', filePath: 'webapp/frontend'
+                emailext body: ''' building lms application frontend job got success check browser with your ip or domain name. 
+
+ThankYou,
+Suresh''', recipientProviders: [buildUser()], subject: 'Build Successful !! lms_frontend', to: 'yoursureshb@gmail.com'
+            }
+        }
+        failure {
+            script {
+                slackSend channel: 'jenkins', color: 'danger', message: 'Oops..FAILED Front-end job failed !!! check the front-end job configurations Thanks...Suresh - Job failed', tokenCredentialId: '39bdd4ec-778b-421e-afa7-43e64c149c79'
+                emailext body: '''building lms application frontend job got failed check job configuration.  
+
+ThankYou,
+Suresh''', recipientProviders: [buildUser()], subject: 'Build failed !! lms_frontend', to: 'yoursureshb@gmail.com'
+            }
+        }
+    }
+}
